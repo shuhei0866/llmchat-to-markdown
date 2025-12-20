@@ -14,7 +14,7 @@ output:
     vault_path: "~/Documents/Obsidian/MyVault"
     # Subdirectories for different types of notes
     slipbox_path: "000_Slipbox/chatgpt_dialogues"
-    blog_path: "100_blog_drafts"
+    blog_path: "100_personal_blog/drafts"
 
 # OpenAI API settings (optional - for automatic insights generation)
 openai:

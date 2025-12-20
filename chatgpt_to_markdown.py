@@ -26,7 +26,7 @@ class Config:
     format: str = "standard"
     obsidian_vault: Optional[str] = None
     obsidian_slipbox: str = "000_Slipbox/chatgpt_dialogues"
-    obsidian_blog: str = "100_blog_drafts"
+    obsidian_blog: str = "100_personal_blog/drafts"
     openai_api_key: Optional[str] = None
     openai_model: str = "gpt-4o-mini"
     openai_temperature: float = 0.2
@@ -36,40 +36,59 @@ class Config:
     
     @classmethod
     def from_file(cls, config_path: str) -> Config:
-        """Load configuration from YAML file"""
+        """Load configuration from YAML file, optionally merged with local override and env vars.
+        Precedence (low -> high): base config.yaml < config.local.yaml < ENV < CLI args
+        """
         config = cls()
-        
+
+        def _apply_yaml(data: dict):
+            nonlocal config
+            if not isinstance(data, dict):
+                return
+            if 'output' in data:
+                output = data['output'] or {}
+                config.output_dir = output.get('directory', config.output_dir)
+                config.format = output.get('format', config.format)
+
+                obs = output.get('obsidian') or {}
+                vault_path = obs.get('vault_path')
+                if vault_path:
+                    config.obsidian_vault = os.path.expanduser(vault_path)
+                config.obsidian_slipbox = obs.get('slipbox_path', config.obsidian_slipbox)
+                config.obsidian_blog = obs.get('blog_path', config.obsidian_blog)
+
+            if 'openai' in data:
+                openai_cfg = data['openai'] or {}
+                config.openai_api_key = openai_cfg.get('api_key', config.openai_api_key)
+                config.openai_model = openai_cfg.get('model', config.openai_model)
+                config.openai_temperature = openai_cfg.get('temperature', config.openai_temperature)
+
+            if 'browser' in data:
+                browser = data['browser'] or {}
+                config.browser_headless = browser.get('headless', config.browser_headless)
+                config.browser_timeout = browser.get('timeout', config.browser_timeout)
+
+            if 'language' in data:
+                lang = data['language'] or {}
+                config.insights_language = lang.get('insights_language', config.insights_language)
+
+        # 1) Base config.yaml
         if os.path.exists(config_path):
             with open(config_path, 'r', encoding='utf-8') as f:
-                data = yaml.safe_load(f)
-                
-                if data and 'output' in data:
-                    config.output_dir = data['output'].get('directory', config.output_dir)
-                    config.format = data['output'].get('format', config.format)
-                    
-                    if 'obsidian' in data['output']:
-                        obs = data['output']['obsidian']
-                        config.obsidian_vault = obs.get('vault_path')
-                        if config.obsidian_vault:
-                            config.obsidian_vault = os.path.expanduser(config.obsidian_vault)
-                        config.obsidian_slipbox = obs.get('slipbox_path', config.obsidian_slipbox)
-                        config.obsidian_blog = obs.get('blog_path', config.obsidian_blog)
-                
-                if data and 'openai' in data:
-                    config.openai_api_key = data['openai'].get('api_key')
-                    config.openai_model = data['openai'].get('model', config.openai_model)
-                    config.openai_temperature = data['openai'].get('temperature', config.openai_temperature)
-                
-                if data and 'browser' in data:
-                    config.browser_headless = data['browser'].get('headless', config.browser_headless)
-                    config.browser_timeout = data['browser'].get('timeout', config.browser_timeout)
-                
-                if data and 'language' in data:
-                    config.insights_language = data['language'].get('insights_language', config.insights_language)
-        
-        # Override with environment variables
-        config.openai_api_key = config.openai_api_key or os.environ.get("OPENAI_API_KEY")
-        
+                _apply_yaml(yaml.safe_load(f))
+
+        # 2) Local override config.local.yaml (same dir or explicit path replacement)
+        local_candidate = None
+        if config_path.endswith('.yaml'):
+            local_candidate = config_path[:-5] + '.local.yaml'
+        if local_candidate and os.path.exists(local_candidate):
+            with open(local_candidate, 'r', encoding='utf-8') as f:
+                _apply_yaml(yaml.safe_load(f))
+
+        # 3) ENV overrides
+        config.openai_api_key = os.environ.get("OPENAI_API_KEY", config.openai_api_key)
+        config.obsidian_vault = os.path.expanduser(os.environ.get("OBSIDIAN_VAULT", config.obsidian_vault or "")) or None
+
         return config
 
 
@@ -86,19 +105,49 @@ def extract_messages_with_playwright(url: str, config: Config) -> List[Message]:
     
     with sync_playwright() as p:
         print("🌐 Launching browser...")
-        browser = p.chromium.launch(headless=config.browser_headless)
+        browser = p.chromium.launch(
+            headless=config.browser_headless,
+            args=['--disable-blink-features=AutomationControlled']
+        )
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             viewport={"width": 1920, "height": 1080}
         )
         page = context.new_page()
         
+        # Hide webdriver property
+        page.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            });
+        """)
+        
         try:
             print(f"📍 Accessing URL: {url}")
             page.goto(url, wait_until="networkidle", timeout=config.browser_timeout)
             
             print("⏳ Waiting for page to load...")
-            page.wait_for_timeout(3000)
+            page.wait_for_timeout(10000)
+            
+            # Wait for conversation content to load
+            try:
+                print("⏳ Waiting for conversation content...")
+                page.wait_for_selector('[data-message-author-role]', timeout=15000)
+                print("✅ Conversation content loaded")
+            except Exception as e:
+                print(f"⚠️ Warning: Conversation content not found: {e}")
+            
+            print("📜 Scrolling to load lazy content...")
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            page.wait_for_timeout(5000)
+            
+            # Scroll back to top and wait for markdown to render
+            page.evaluate("window.scrollTo(0, 0)")
+            page.wait_for_timeout(5000)
+            
+            # Check if markdown elements are now loaded
+            markdown_count = page.evaluate("() => document.querySelectorAll('.markdown').length")
+            print(f"   Found {markdown_count} .markdown elements")
             
             print("🔍 Extracting conversation data...")
             js_script = """
@@ -163,26 +212,69 @@ def extract_messages_with_playwright(url: str, config: Config) -> List[Message]:
                 // Method 4: Extract from DOM elements
                 const elements = [];
                 
-                const selectors = [
-                    '[data-message-author-role]',
-                    '[data-testid*="conversation-turn"]',
-                    '.text-message',
-                    '.markdown',
-                    'article'
-                ];
-                
-                for (const selector of selectors) {
-                    const found = document.querySelectorAll(selector);
-                    if (found.length > 0) {
-                        found.forEach(el => {
-                            const text = el.innerText || el.textContent;
-                            const role = el.getAttribute('data-message-author-role') || 
-                                        (el.className.includes('user') ? 'user' : 'assistant');
-                            if (text && text.trim()) {
-                                elements.push({role, text: text.trim()});
+                // Strategy: Iterate over conversation turns
+                const turns = document.querySelectorAll('[data-testid*="conversation-turn"]');
+                if (turns.length > 0) {
+                    turns.forEach(turn => {
+                        // 1. Try to find User message
+                        let userText = "";
+                        const userEl = turn.querySelector('[data-message-author-role="user"]');
+                        if (userEl) {
+                            // Try textContent first (works even if CSS hides content)
+                            userText = userEl.textContent || userEl.innerText;
+                        }
+                        
+                        if (userText && userText.trim()) {
+                            elements.push({role: 'user', text: userText.trim()});
+                        }
+                        
+                        // 2. Try to find Assistant message
+                        let assistantText = "";
+                        const assistantEl = turn.querySelector('[data-message-author-role="assistant"]');
+                        
+                        if (assistantEl) {
+                            // Try textContent first (works even if CSS hides content)
+                            assistantText = assistantEl.textContent;
+                            
+                            // If still empty, try innerText
+                            if (!assistantText || !assistantText.trim()) {
+                                assistantText = assistantEl.innerText;
                             }
-                        });
-                        if (elements.length > 0) break;
+                        } 
+                        
+                        if (!assistantText || !assistantText.trim()) {
+                            // Fallback: .markdown is typically the AI response content
+                            const markdown = turn.querySelector('.markdown');
+                            if (markdown) {
+                                assistantText = markdown.textContent || markdown.innerText;
+                            }
+                        }
+                        
+                        if (assistantText && assistantText.trim()) {
+                            elements.push({role: 'assistant', text: assistantText.trim()});
+                        }
+                    });
+                }
+                
+                // Fallback if no turns found
+                if (elements.length === 0) {
+                    const selectors = [
+                        '[data-message-author-role]',
+                        '.text-message',
+                        '.markdown',
+                        'article'
+                    ];
+                    for (const selector of selectors) {
+                        const found = document.querySelectorAll(selector);
+                        if (found.length > 0) {
+                            found.forEach(el => {
+                                const text = el.innerText || el.textContent;
+                                const role = el.getAttribute('data-message-author-role') || 
+                                            (el.className.includes('user') ? 'user' : 'assistant');
+                                if (text && text.trim()) elements.push({role, text: text.trim()});
+                            });
+                            if (elements.length > 0) break;
+                        }
                     }
                 }
                 
