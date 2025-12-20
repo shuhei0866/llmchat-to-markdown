@@ -29,7 +29,7 @@ echo "   - Description: Export ChatGPT conversations as beautiful markdown files
 echo "   - Public repository"
 echo ""
 echo "2. Run these commands:"
-echo "   git remote add origin https://github.com/snufkin0866/chatgpt-to-markdown.git"
+echo "   git remote add origin https://github.com/shuhei0866/chatgpt-to-markdown.git"
 echo "   git branch -M main"
 echo "   git push -u origin main"
 echo ""

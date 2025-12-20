@@ -28,7 +28,7 @@ ChatGPTの会話を美しいMarkdownファイルとしてエクスポート・�
 
 1. リポジトリをクローン:
 ```bash
-git clone https://github.com/snufkin0866/chatgpt-to-markdown.git
+git clone https://github.com/shuhei0866/chatgpt-to-markdown.git
 cd chatgpt-to-markdown
 ```
 
@@ -155,7 +155,7 @@ export OPENAI_API_KEY="sk-..."
 
 ## 📮 連絡先
 
-作成者: [@snufkin0866](https://github.com/snufkin0866)
+作成者: [@shuhei0866](https://github.com/shuhei0866)
 
 ## ⭐ スター履歴
 

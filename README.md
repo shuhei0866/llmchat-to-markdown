@@ -28,7 +28,7 @@ Export and save ChatGPT conversations as beautiful markdown files. Perfect for a
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/snufkin0866/chatgpt-to-markdown.git
+git clone https://github.com/shuhei0866/chatgpt-to-markdown.git
 cd chatgpt-to-markdown
 ```
 
@@ -155,7 +155,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📮 Contact
 
-Created by [@snufkin0866](https://github.com/snufkin0866)
+Created by [@shuhei0866](https://github.com/shuhei0866)
 
 ## ⭐ Star History
 

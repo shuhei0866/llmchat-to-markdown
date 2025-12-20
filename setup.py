@@ -6,12 +6,12 @@ with open("README.md", "r", encoding="utf-8") as fh:
 setup(
     name="chatgpt-to-markdown",
     version="1.0.0",
-    author="snufkin0866",
+    author="shuhei0866",
     author_email="",
     description="Export ChatGPT conversations as beautiful markdown files",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/snufkin0866/chatgpt-to-markdown",
+    url="https://github.com/shuhei0866/chatgpt-to-markdown",
     packages=find_packages(),
     classifiers=[
         "Programming Language :: Python :: 3",
@@ -39,7 +39,7 @@ setup(
         ],
     },
     project_urls={
-        "Bug Reports": "https://github.com/snufkin0866/chatgpt-to-markdown/issues",
-        "Source": "https://github.com/snufkin0866/chatgpt-to-markdown",
+        "Bug Reports": "https://github.com/shuhei0866/chatgpt-to-markdown/issues",
+        "Source": "https://github.com/shuhei0866/chatgpt-to-markdown",
     },
 )
