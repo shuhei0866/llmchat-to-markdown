@@ -98,6 +98,103 @@ class Message:
     content: str
 
 
+def _mapping_message(node: Any) -> Optional[Tuple[Optional[str], str, Any]]:
+    """Return (role, content, create_time) for a mapping node, or None if it has no content."""
+    if not isinstance(node, dict):
+        return None
+    msg = node.get('message')
+    if not isinstance(msg, dict):
+        return None
+
+    author = msg.get('author')
+    role = author.get('role') if isinstance(author, dict) else None
+    content_data = msg.get('content')
+    parts = content_data.get('parts') if isinstance(content_data, dict) else None
+    if not isinstance(parts, (list, tuple)):
+        parts = []
+
+    content = '\n'.join([str(p) for p in parts if p])
+    if not content or is_ui_text(content):
+        return None
+    return role, content, msg.get('create_time', 0)
+
+
+def _active_lineage(mapping: Dict[Any, Any], current_node: Any) -> Optional[List[Any]]:
+    """Return the nodes from root to current_node, or None if no valid lineage exists.
+
+    The lineage is invalid when current_node is missing, a referenced node is
+    not in the mapping, or the parent chain contains a cycle.
+    """
+    if current_node is None:
+        return None
+
+    lineage = []
+    seen = set()
+    node_id = current_node
+    while node_id is not None:
+        try:
+            if node_id in seen or node_id not in mapping:
+                return None
+        except TypeError:  # unhashable ID
+            return None
+        node = mapping[node_id]
+        if not isinstance(node, dict):
+            return None
+        seen.add(node_id)
+        lineage.append(node)
+        node_id = node.get('parent')
+
+    lineage.reverse()
+    return lineage
+
+
+def _sortable_create_time(value: Any) -> float:
+    """Coerce a create_time to a sortable number; unusable values count as zero."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    if value != value or value in (float('inf'), float('-inf')):
+        return 0
+    return value
+
+
+def _messages_from_mapping(mapping: Any, current_node: Any = None) -> List[Message]:
+    """Convert ChatGPT's conversation tree (mapping) into an ordered message list.
+
+    Edited prompts and regenerated answers leave abandoned branches in the
+    mapping. When current_node gives a valid lineage back to the root, only
+    that active branch is exported, in traversal order. Otherwise fall back
+    to every message in the mapping, sorted chronologically.
+    """
+    if not isinstance(mapping, dict):
+        return []
+
+    lineage = _active_lineage(mapping, current_node)
+    if lineage is not None:
+        messages = []
+        for node in lineage:
+            extracted = _mapping_message(node)
+            if extracted is None:
+                continue
+            role, content, _ = extracted
+            if role not in ('user', 'assistant') or not content.strip():
+                continue
+            messages.append(Message("User" if role == "user" else "ChatGPT", content))
+        return messages
+
+    # Legacy fallback: all messages in chronological order (stable for ties)
+    nodes = []
+    for node in mapping.values():
+        extracted = _mapping_message(node)
+        if extracted is None:
+            continue
+        role, content, create_time = extracted
+        speaker = "User" if role == "user" else "ChatGPT"
+        nodes.append((_sortable_create_time(create_time), Message(speaker, content)))
+
+    nodes.sort(key=lambda x: x[0])
+    return [msg for _, msg in nodes]
+
+
 def extract_messages_with_playwright(url: str, config: Config) -> List[Message]:
     """Extract messages from ChatGPT share URL using Playwright"""
     
@@ -303,24 +400,9 @@ def extract_messages_with_playwright(url: str, config: Config) -> List[Message]:
                 
                 # Process mapping data
                 elif isinstance(result, dict) and 'mapping' in result:
-                    mapping = result['mapping']
-                    nodes = []
-                    
-                    for node_id, node in mapping.items():
-                        if 'message' in node and node['message']:
-                            msg = node['message']
-                            role = msg.get('author', {}).get('role', 'assistant')
-                            parts = msg.get('content', {}).get('parts', [])
-                            create_time = msg.get('create_time', 0)
-                            
-                            content = '\n'.join([str(p) for p in parts if p])
-                            speaker = "User" if role == "user" else "ChatGPT"
-                            
-                            if content and not is_ui_text(content):
-                                nodes.append((create_time, Message(speaker, content)))
-                    
-                    nodes.sort(key=lambda x: x[0])
-                    messages = [msg for _, msg in nodes]
+                    messages = _messages_from_mapping(
+                        result['mapping'], result.get('current_node')
+                    )
                 
                 # Process linear conversation data
                 elif isinstance(result, dict) and 'linear_conversation' in result:
